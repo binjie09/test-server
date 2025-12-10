@@ -28,7 +28,8 @@ const extractUserSuffix = (path, userId, isWs = false) => {
 
 const buildWsTestUrl = (endpointPath) => {
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${scheme}//${window.location.host}${endpointPath}`;
+  const path = endpointPath?.startsWith('/') ? endpointPath : `/${endpointPath || ''}`;
+  return `${scheme}//${window.location.host}${path}`;
 };
 
 function App() {
@@ -450,7 +451,7 @@ function App() {
                         <div className="endpoint-actions">
                           <button 
                             className="btn btn-secondary btn-sm"
-                            onClick={() => copyToClipboard(endpoint.isWebSocket ? buildWsTestUrl(eid) : `${window.location.origin}${endpoint.path}`)}
+                            onClick={() => copyToClipboard(endpoint.isWebSocket ? buildWsTestUrl(endpoint.path) : `${window.location.origin}${endpoint.path}`)}
                             title={endpoint.isWebSocket ? "复制 WS 地址" : "复制 URL"}
                           >
                             📋
