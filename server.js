@@ -137,21 +137,16 @@ wss.on('connection', async (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const type = url.searchParams.get('type');
   const cookies = parseCookies(req.headers.cookie || '');
-  const userId = cookies[USER_COOKIE];
-
-  if (!userId) {
-    ws.close(4003, '需要先获取用户身份');
-    return;
-  }
+  const clientUserId = cookies[USER_COOKIE] || 'guest';
   
   if (type === 'logs') {
     // 日志订阅连接（按用户）
-    if (!logClients.has(userId)) {
-      logClients.set(userId, new Set());
+    if (!logClients.has(clientUserId)) {
+      logClients.set(clientUserId, new Set());
     }
-    logClients.get(userId).add(ws);
+    logClients.get(clientUserId).add(ws);
     ws.on('close', () => {
-      logClients.get(userId)?.delete(ws);
+      logClients.get(clientUserId)?.delete(ws);
     });
   } else if (type === 'test') {
     // 测试WebSocket连接
@@ -159,7 +154,7 @@ wss.on('connection', async (ws, req) => {
     const connectionId = uuidv4();
 
     try {
-      const endpoint = await Endpoint.findOne({ _id: endpointId, userId });
+      const endpoint = await Endpoint.findOne({ _id: endpointId });
       if (!endpoint || !endpoint.isWebSocket) {
         ws.close(4004, '未找到对应的 WebSocket 接口');
         return;
@@ -183,8 +178,9 @@ wss.on('connection', async (ws, req) => {
         action: 'connect',
         endpointId,
         connectionId,
-      userId,
-      ip: getClientIpFromWs(req),
+        userId: endpoint.userId, // 日志归属接口创建者，保证他能看到
+        clientUserId,
+        ip: getClientIpFromWs(req),
         headers: req.headers,
         timestamp: new Date().toISOString()
       });
@@ -197,7 +193,8 @@ wss.on('connection', async (ws, req) => {
           action: 'message',
           endpointId,
           connectionId,
-          userId,
+          userId: endpoint.userId,
+          clientUserId,
           ip: getClientIpFromWs(req),
           message: messageStr,
           timestamp: new Date().toISOString()
@@ -208,7 +205,8 @@ wss.on('connection', async (ws, req) => {
           type: 'ws_message',
           endpointId,
           connectionId,
-          userId,
+          userId: endpoint.userId,
+          clientUserId,
           message: messageStr,
           timestamp: new Date().toISOString()
         });
@@ -221,7 +219,8 @@ wss.on('connection', async (ws, req) => {
           action: 'disconnect',
           endpointId,
           connectionId,
-          userId,
+          userId: endpoint.userId,
+          clientUserId,
           timestamp: new Date().toISOString()
         });
       });
