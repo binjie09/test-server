@@ -191,6 +191,19 @@ function App() {
     });
   };
 
+  const getDisplayIp = (log) => {
+    if (log.ip) return log.ip;
+    const xfwd = log.headers && (log.headers['x-forwarded-for'] || log.headers['X-Forwarded-For']);
+    if (xfwd) {
+      if (Array.isArray(xfwd)) return xfwd[0];
+      const parts = String(xfwd).split(',');
+      if (parts.length > 0) return parts[0].trim();
+    }
+    const xreal = log.headers && (log.headers['x-real-ip'] || log.headers['X-Real-IP']);
+    if (xreal) return Array.isArray(xreal) ? xreal[0] : xreal;
+    return '';
+  };
+
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
   };
@@ -558,7 +571,7 @@ function App() {
                         <span className={`log-method method-${log.method}`}>{log.method}</span>
                       )}
                       <span className="log-path">{log.path || log.message || '-'}</span>
-                      {log.ip && <span className="log-ip">{log.ip}</span>}
+                      {getDisplayIp(log) && <span className="log-ip">{getDisplayIp(log)}</span>}
                       <span className="log-time">{formatTime(log.timestamp)}</span>
                     </div>
                     
