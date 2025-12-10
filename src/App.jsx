@@ -1,24 +1,34 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const API_BASE = '';
+const HTTP_PREFIX = '/test/';
+const WS_PREFIX = '/testws/';
 
-const buildUserPath = (suffixOrFull, userId) => {
-  if (!userId) return '/test/hello';
+const buildPath = (suffixOrFull, userId, isWs = false) => {
+  const prefix = isWs ? WS_PREFIX : HTTP_PREFIX;
+  if (!userId) return `${prefix}hello`;
   const raw = String(suffixOrFull || '').trim();
-  // 已经包含完整前缀则直接返回（去重斜杠）
-  if (raw.startsWith(`/test/${userId}/`)) {
+  const fullPrefix = `${prefix}${userId}/`;
+  if (raw.startsWith(fullPrefix)) {
     return raw.replace(/\/{2,}/g, '/');
   }
+  if (raw.startsWith(prefix)) {
+    return `${prefix}${raw.slice(prefix.length)}`.replace(/\/{2,}/g, '/');
+  }
   const cleaned = raw.replace(/^\/+/, '');
-  return `/test/${userId}/${cleaned || 'hello'}`.replace(/\/{2,}/g, '/');
+  return `${fullPrefix}${cleaned || 'hello'}`.replace(/\/{2,}/g, '/');
 };
 
-const normalizeTestPath = (raw, userId) => buildUserPath(raw, userId);
-
-const extractUserSuffix = (path, userId) => {
+const extractUserSuffix = (path, userId, isWs = false) => {
   if (!path || !userId) return '';
-  const re = new RegExp(`^/test/${userId}/?`);
+  const prefix = isWs ? WS_PREFIX : HTTP_PREFIX;
+  const re = new RegExp(`^${prefix}${userId}/?`);
   return path.replace(re, '').replace(/^\/+/, '');
+};
+
+const buildWsTestUrl = (endpointPath) => {
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${scheme}//${window.location.host}${endpointPath}`;
 };
 
 function App() {
@@ -82,7 +92,7 @@ function App() {
         const meRes = await authedFetch(`${API_BASE}/api/me`);
         const me = await meRes.json();
         setUserInfo(me);
-        setFormData(prev => ({ ...prev, path: me.defaultPath }));
+        setFormData(prev => ({ ...prev, path: buildPath(me.defaultPath, me.userId, false) }));
         await Promise.all([fetchEndpoints(), fetchLogs()]);
       } catch (e) {
         console.error('初始化失败', e);
@@ -116,7 +126,7 @@ function App() {
     const res = await authedFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...formData, path: buildUserPath(formData.path, userInfo?.userId) })
+      body: JSON.stringify({ ...formData, path: buildPath(formData.path, userInfo?.userId, formData.isWebSocket) })
     });
     
     if (res.ok) {
@@ -129,7 +139,7 @@ function App() {
 
   const resetForm = () => {
     setFormData({
-      path: userInfo ? `/test/${userInfo.userId}/hello` : '',
+      path: userInfo ? buildPath('hello', userInfo.userId, false) : '',
       method: 'GET',
       response: '{"message": "Hello World", "success": true}',
       statusCode: 200,
@@ -219,7 +229,7 @@ function App() {
       wsTestConnection.close();
     }
     
-    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws?type=test&endpoint=${endpoint._id || endpoint.id}`;
+    const wsUrl = buildWsTestUrl(endpoint.path);
     const ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
@@ -271,7 +281,7 @@ function App() {
     }
   };
 
-  const pathSuffix = extractUserSuffix(formData.path, userInfo?.userId);
+  const pathSuffix = extractUserSuffix(formData.path, userInfo?.userId, formData.isWebSocket);
 
   return (
     <div className="app">
@@ -311,7 +321,9 @@ function App() {
             {/* 创建表单 */}
             <form className="form" onSubmit={handleSubmit}>
               <div className="form-group">
-                <label className="form-label">接口路径（固定前缀 /test/{userInfo?.userId || '...'}/）</label>
+                <label className="form-label">
+                  接口路径（固定前缀 {formData.isWebSocket ? `/testws/${userInfo?.userId || '...'}/` : `/test/${userInfo?.userId || '...'}/`}）
+                </label>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <div style={{ 
                     padding: '10px 12px',
@@ -321,13 +333,13 @@ function App() {
                     fontFamily: 'JetBrains Mono, monospace',
                     color: 'var(--text-secondary)'
                   }}>
-                    {`/test/${userInfo?.userId || '...'}/`}
+                    {formData.isWebSocket ? `/testws/${userInfo?.userId || '...'}/` : `/test/${userInfo?.userId || '...'}/`}
                   </div>
                   <input
                     type="text"
                     className="form-input mono"
                     value={pathSuffix}
-                    onChange={(e) => setFormData({ ...formData, path: buildUserPath(e.target.value, userInfo?.userId) })}
+                    onChange={(e) => setFormData({ ...formData, path: buildPath(e.target.value, userInfo?.userId, formData.isWebSocket) })}
                     placeholder="hello"
                     disabled={!userInfo}
                   />
@@ -438,8 +450,8 @@ function App() {
                         <div className="endpoint-actions">
                           <button 
                             className="btn btn-secondary btn-sm"
-                            onClick={() => copyToClipboard(`${window.location.origin}${endpoint.path}`)}
-                            title="复制URL"
+                            onClick={() => copyToClipboard(endpoint.isWebSocket ? buildWsTestUrl(eid) : `${window.location.origin}${endpoint.path}`)}
+                            title={endpoint.isWebSocket ? "复制 WS 地址" : "复制 URL"}
                           >
                             📋
                           </button>

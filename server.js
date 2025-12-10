@@ -18,7 +18,7 @@ dotenv.config();
 
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 3131;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/test-server';
@@ -124,6 +124,14 @@ function normalizeTestPath(rawPath) {
   return `/test/${suffix || ''}`.replace(/\/{2,}/g, '/');
 }
 
+function normalizeWsPath(rawPath) {
+  if (rawPath === undefined || rawPath === null) return null;
+  const cleaned = String(rawPath).trim().replace(/^\/+/, '');
+  const withoutPrefix = cleaned.startsWith('testws/') ? cleaned.slice('testws/'.length) : cleaned;
+  const suffix = withoutPrefix.replace(/^\/+/, '');
+  return `/testws/${suffix || ''}`.replace(/\/{2,}/g, '/');
+}
+
 function parseCookies(cookieHeader = '') {
   return cookieHeader.split(';').reduce((acc, pair) => {
     const [k, v] = pair.trim().split('=');
@@ -148,18 +156,19 @@ wss.on('connection', async (ws, req) => {
     ws.on('close', () => {
       logClients.get(clientUserId)?.delete(ws);
     });
-  } else if (type === 'test') {
-    // 测试WebSocket连接
-    const endpointId = url.searchParams.get('endpoint');
+  } else {
+    // 业务 WebSocket 连接，使用路径匹配
+    const pathname = url.pathname;
     const connectionId = uuidv4();
 
     try {
-      const endpoint = await Endpoint.findOne({ _id: endpointId });
-      if (!endpoint || !endpoint.isWebSocket) {
+      const endpoint = await Endpoint.findOne({ path: pathname, isWebSocket: true });
+      if (!endpoint) {
         ws.close(4004, '未找到对应的 WebSocket 接口');
         return;
       }
 
+      const endpointId = endpoint._id.toString();
       if (!testWsConnections.has(endpointId)) {
         testWsConnections.set(endpointId, new Map());
       }
@@ -270,10 +279,10 @@ app.get('/api/me', (req, res) => {
 app.post('/api/endpoints', async (req, res) => {
   const { path: endpointPath, method, response, statusCode, contentType, isWebSocket } = req.body;
   
-  const normalizedPath = normalizeTestPath(endpointPath);
+  const normalizedPath = isWebSocket ? normalizeWsPath(endpointPath) : normalizeTestPath(endpointPath);
   
-  if (!normalizedPath || !normalizedPath.startsWith('/test/')) {
-    return res.status(400).json({ error: '路径必须以/test/开头' });
+  if (!normalizedPath || !(isWebSocket ? normalizedPath.startsWith('/testws/') : normalizedPath.startsWith('/test/'))) {
+    return res.status(400).json({ error: isWebSocket ? '路径必须以/testws/开头' : '路径必须以/test/开头' });
   }
 
   // 检查重复（全局唯一，避免匹配冲突）
@@ -306,9 +315,13 @@ app.put('/api/endpoints/:id', async (req, res) => {
   
   let nextPath = endpoint.path;
   if (req.body.path !== undefined) {
-    const normalizedPath = normalizeTestPath(req.body.path);
-    if (!normalizedPath || !normalizedPath.startsWith('/test/')) {
-      return res.status(400).json({ error: '路径必须以/test/开头' });
+    const normalizedPath = (req.body.isWebSocket ?? endpoint.isWebSocket)
+      ? normalizeWsPath(req.body.path)
+      : normalizeTestPath(req.body.path);
+    if (!normalizedPath || ((req.body.isWebSocket ?? endpoint.isWebSocket)
+      ? !normalizedPath.startsWith('/testws/')
+      : !normalizedPath.startsWith('/test/'))) {
+      return res.status(400).json({ error: (req.body.isWebSocket ?? endpoint.isWebSocket) ? '路径必须以/testws/开头' : '路径必须以/test/开头' });
     }
     nextPath = normalizedPath;
 
