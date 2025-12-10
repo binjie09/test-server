@@ -62,6 +62,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(cookieParser());
+app.set('trust proxy', true); // 让 req.ip 使用代理后的真实IP
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.text());
@@ -87,6 +88,26 @@ app.use(ensureUser);
 // 存储请求日志（内存，仅当前进程）
 const requestLogs = [];
 const MAX_LOGS = 500;
+
+function getClientIp(req) {
+  const xfwd = req.headers['x-forwarded-for'];
+  if (xfwd) {
+    const parts = Array.isArray(xfwd) ? xfwd : String(xfwd).split(',');
+    if (parts.length > 0) return parts[0].trim();
+  }
+  if (req.headers['x-real-ip']) return String(req.headers['x-real-ip']).trim();
+  return req.ip || req.socket.remoteAddress;
+}
+
+function getClientIpFromWs(req) {
+  const xfwd = req.headers['x-forwarded-for'];
+  if (xfwd) {
+    const parts = Array.isArray(xfwd) ? xfwd : String(xfwd).split(',');
+    if (parts.length > 0) return parts[0].trim();
+  }
+  if (req.headers['x-real-ip']) return String(req.headers['x-real-ip']).trim();
+  return req.socket.remoteAddress;
+}
 
 // 存储WebSocket连接（分用户推送日志）
 const logClients = new Map(); // userId -> Set<ws>
@@ -162,8 +183,8 @@ wss.on('connection', async (ws, req) => {
         action: 'connect',
         endpointId,
         connectionId,
-        userId,
-        ip: req.socket.remoteAddress,
+      userId,
+      ip: getClientIpFromWs(req),
         headers: req.headers,
         timestamp: new Date().toISOString()
       });
@@ -177,7 +198,7 @@ wss.on('connection', async (ws, req) => {
           endpointId,
           connectionId,
           userId,
-          ip: req.socket.remoteAddress,
+          ip: getClientIpFromWs(req),
           message: messageStr,
           timestamp: new Date().toISOString()
         });
@@ -413,7 +434,7 @@ app.use('/test/*', async (req, res) => {
       matched: false,
       method: req.method,
       path: requestPath,
-      ip: req.ip || req.socket.remoteAddress,
+      ip: getClientIp(req),
       headers: req.headers,
       query: req.query,
       body: req.body,
@@ -430,7 +451,7 @@ app.use('/test/*', async (req, res) => {
     endpointId: matchedEndpoint.id,
     method: req.method,
     path: requestPath,
-    ip: req.ip || req.socket.remoteAddress,
+    ip: getClientIp(req),
     headers: req.headers,
     query: req.query,
     body: req.body,
