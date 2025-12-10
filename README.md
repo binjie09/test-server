@@ -2,6 +2,8 @@
 
 一个用于快速生成测试接口的工具，支持 HTTP 和 WebSocket 协议，可以实时查看请求日志。
 
+线上服务：https://test-server.binjie.site:7777/
+
 ![界面预览](preview.png)
 
 ## ✨ 功能特性
