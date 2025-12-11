@@ -208,17 +208,6 @@ wss.on('connection', async (ws, req) => {
           message: messageStr,
           timestamp: new Date().toISOString()
         });
-        
-        // 广播给所有日志订阅者（同用户）
-        broadcastLog({
-          type: 'ws_message',
-          endpointId,
-          connectionId,
-          userId: endpoint.userId,
-          clientUserId,
-          message: messageStr,
-          timestamp: new Date().toISOString()
-        });
       });
       
       ws.on('close', () => {
