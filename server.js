@@ -191,7 +191,8 @@ data: {"id":"e7e1ad59-c01a-48fe-b612-da974eaa01b1","object":"chat.completion.chu
 
 data: {"id":"e7e1ad59-c01a-48fe-b612-da974eaa01b1","object":"chat.completion.chunk","created":1764576715,"model":"deepseek-chat","system_fingerprint":"fp_eaab8d114b_prod0820_fp8_kvcache","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":82,"total_tokens":87,"prompt_tokens_details":{"cached_tokens":0},"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":5}}
 
-data: [DONE]`;
+data: [DONE]
+`;
 // 连接数据库
 mongoose.connect(MONGODB_URI)
   .then(() => console.log('✅ MongoDB 已连接'))
@@ -331,8 +332,11 @@ function buildSseEventsFromResponse(raw) {
     // 确保每行都以换行符结尾，然后加一个空行作为事件分隔
     events.push(`${line}\n\n`);
   }
-  // 如果没有任何事件，返回一个空的注释事件以保持连接
-  return events.length > 0 ? events : [': keepalive\n\n'];
+  // 如果没有任何事件，返回一个空的keepalive
+  if (events.length === 0) {
+    return [': keepalive\n\n'];
+  }
+  return events;
 }
 
 function streamSseEvents(req, res, events, durationSeconds) {
@@ -610,6 +614,77 @@ app.get('/api/logs', (req, res) => {
   res.json(filtered);
 });
 
+// OpenAI兼容的聊天接口 (mock)
+app.post(['/v1/chat/completions', '/v1/open/chat/common'], async (req, res) => {
+  const { stream } = req.body;
+
+  // 记录请求日志
+  addLog({
+    userId: req.userId,
+    type: 'http',
+    matched: true,
+    method: 'POST',
+    path: req.path,
+    ip: getClientIp(req),
+    headers: req.headers,
+    query: req.query,
+    body: req.body,
+    timestamp: new Date().toISOString()
+  });
+
+  if (stream) {
+    // 流式响应 - OpenAI兼容格式
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const events = buildSseEventsFromResponse(DEFAULT_SSE_RESPONSE);
+
+    // 逐个发送事件
+    let index = 0;
+    const sendNext = () => {
+      if (res.destroyed || res.writableEnded) return;
+
+      if (index < events.length) {
+        res.write(events[index]);
+        index++;
+        setTimeout(sendNext, 50); // 50ms间隔
+      } else {
+        res.end();
+      }
+    };
+
+    req.on('close', () => {
+      res.end();
+    });
+
+    sendNext();
+  } else {
+    // 非流式响应
+    res.json({
+      id: 'chatcmpl-' + uuidv4(),
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: 'gpt-3.5-turbo',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: '你好！很高兴见到你！😊 我是DeepSeek，由深度求索公司创造的AI助手。'
+        },
+        finish_reason: 'stop'
+      }],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 50,
+        total_tokens: 60
+      }
+    });
+  }
+});
+
 // API路由 - 清空当前用户日志
 app.delete('/api/logs', (req, res) => {
   for (let i = requestLogs.length - 1; i >= 0; i--) {
@@ -727,26 +802,48 @@ app.use('/test/*', async (req, res) => {
     return res.status(400).json({ error: '该端点为 WebSocket，请通过 WS 连接', path: requestPath });
   }
 
-  // 返回自定义响应
-  res.status(matchedEndpoint.statusCode);
-  res.set('Content-Type', matchedEndpoint.contentType);
-
+  // SSE流式响应
   if (isEventStreamContentType(matchedEndpoint.contentType)) {
-    const rawContentType = matchedEndpoint.contentType || 'text/event-stream';
-    const hasCharset = /;\s*charset\s*=/.test(String(rawContentType));
-    const mediaType = String(rawContentType).split(';', 1)[0].trim();
-    res.set('Content-Type', hasCharset ? rawContentType : `${mediaType}; charset=utf-8`);
-    res.set({
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-    res.flushHeaders?.();
+    // 先设置状态码，再设置headers
+    res.status(matchedEndpoint.statusCode);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
 
     const events = buildSseEventsFromResponse(matchedEndpoint.response);
-    streamSseEvents(req, res, events, matchedEndpoint.sseDurationSeconds);
+
+    // 简化的流式发送
+    let index = 0;
+    const sendNext = () => {
+      if (res.destroyed || res.writableEnded) return;
+
+      if (index < events.length) {
+        res.write(events[index]);
+        index++;
+        if (matchedEndpoint.sseDurationSeconds > 0) {
+          const delay = (matchedEndpoint.sseDurationSeconds * 1000) / events.length;
+          setTimeout(sendNext, delay);
+        } else {
+          setTimeout(sendNext, 30); // 默认30ms间隔
+        }
+      } else {
+        res.end();
+      }
+    };
+
+    req.on('close', () => {
+      res.end();
+    });
+
+    sendNext();
     return;
   }
+
+  // 普通响应
+  res.status(matchedEndpoint.statusCode);
+  res.set('Content-Type', matchedEndpoint.contentType);
   
   try {
     if (matchedEndpoint.contentType === 'application/json') {
