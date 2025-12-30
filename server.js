@@ -328,9 +328,11 @@ function buildSseEventsFromResponse(raw) {
   const events = [];
   for (const line of lines) {
     if (line.trim() === '') continue;
+    // 确保每行都以换行符结尾，然后加一个空行作为事件分隔
     events.push(`${line}\n\n`);
   }
-  return events.length > 0 ? events : ['\n\n'];
+  // 如果没有任何事件，返回一个空的注释事件以保持连接
+  return events.length > 0 ? events : [': keepalive\n\n'];
 }
 
 function streamSseEvents(req, res, events, durationSeconds) {
@@ -340,29 +342,44 @@ function streamSseEvents(req, res, events, durationSeconds) {
 
   let index = 0;
   let timer = null;
+  let closed = false;
 
   const cleanup = () => {
+    closed = true;
     if (timer) clearTimeout(timer);
     timer = null;
   };
 
   const writeNext = () => {
-    if (res.writableEnded || res.destroyed) {
+    if (closed || res.writableEnded || res.destroyed) {
       cleanup();
       return;
     }
     if (index >= events.length) {
       cleanup();
-      res.end();
+      try {
+        res.end();
+      } catch (e) {
+        // 忽略结束时的错误
+      }
       return;
     }
 
-    res.write(events[index]);
+    try {
+      res.write(events[index]);
+    } catch (e) {
+      cleanup();
+      return;
+    }
     index += 1;
 
     if (index >= events.length) {
       cleanup();
-      res.end();
+      try {
+        res.end();
+      } catch (e) {
+        // 忽略结束时的错误
+      }
       return;
     }
 
@@ -372,6 +389,8 @@ function streamSseEvents(req, res, events, durationSeconds) {
   };
 
   req.on('close', cleanup);
+  req.on('error', cleanup);
+  res.on('error', cleanup);
   writeNext();
 }
 
@@ -713,6 +732,10 @@ app.use('/test/*', async (req, res) => {
   res.set('Content-Type', matchedEndpoint.contentType);
 
   if (isEventStreamContentType(matchedEndpoint.contentType)) {
+    const rawContentType = matchedEndpoint.contentType || 'text/event-stream';
+    const hasCharset = /;\s*charset\s*=/.test(String(rawContentType));
+    const mediaType = String(rawContentType).split(';', 1)[0].trim();
+    res.set('Content-Type', hasCharset ? rawContentType : `${mediaType}; charset=utf-8`);
     res.set({
       'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
