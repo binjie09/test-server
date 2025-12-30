@@ -40,6 +40,7 @@ const endpointSchema = new mongoose.Schema({
   response: { type: String, default: '{"message": "Hello World"}' },
   statusCode: { type: Number, default: 200 },
   contentType: { type: String, default: 'application/json' },
+  sseDurationSeconds: { type: Number, default: 0 },
   isWebSocket: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now }
 });
@@ -138,6 +139,74 @@ function parseCookies(cookieHeader = '') {
     if (k && v !== undefined) acc[k] = decodeURIComponent(v);
     return acc;
   }, {});
+}
+
+function isEventStreamContentType(contentType) {
+  if (!contentType) return false;
+  const mediaType = String(contentType).split(';', 1)[0].trim().toLowerCase();
+  return mediaType === 'text/event-stream';
+}
+
+function normalizeSseDurationSeconds(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return num;
+}
+
+function buildSseEventsFromResponse(raw) {
+  const text = raw === undefined || raw === null ? '' : String(raw);
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0) lines.push('');
+
+  const events = [];
+  for (let i = 0; i < lines.length; i += 2) {
+    const line1 = lines[i] ?? '';
+    const line2 = lines[i + 1] ?? '';
+    events.push(`data: ${line1}\ndata: ${line2}\n\n`);
+  }
+  return events.length > 0 ? events : ['data: \ndata: \n\n'];
+}
+
+function streamSseEvents(req, res, events, durationSeconds) {
+  const totalMs = normalizeSseDurationSeconds(durationSeconds) * 1000;
+  const startTime = Date.now();
+  const denom = Math.max(1, events.length - 1);
+
+  let index = 0;
+  let timer = null;
+
+  const cleanup = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+
+  const writeNext = () => {
+    if (res.writableEnded || res.destroyed) {
+      cleanup();
+      return;
+    }
+    if (index >= events.length) {
+      cleanup();
+      res.end();
+      return;
+    }
+
+    res.write(events[index]);
+    index += 1;
+
+    if (index >= events.length) {
+      cleanup();
+      res.end();
+      return;
+    }
+
+    const nextTarget = startTime + Math.round((index * totalMs) / denom);
+    const delay = Math.max(0, nextTarget - Date.now());
+    timer = setTimeout(writeNext, delay);
+  };
+
+  req.on('close', cleanup);
+  writeNext();
 }
 
 // WebSocket连接处理
@@ -266,7 +335,7 @@ app.get('/api/me', (req, res) => {
 
 // API路由 - 创建新接口
 app.post('/api/endpoints', async (req, res) => {
-  const { path: endpointPath, method, response, statusCode, contentType, isWebSocket } = req.body;
+  const { path: endpointPath, method, response, statusCode, contentType, sseDurationSeconds, isWebSocket } = req.body;
   
   const normalizedPath = isWebSocket ? normalizeWsPath(endpointPath) : normalizeTestPath(endpointPath);
   
@@ -287,6 +356,7 @@ app.post('/api/endpoints', async (req, res) => {
     response: response || '{"message": "Hello World"}',
     statusCode: statusCode || 200,
     contentType: contentType || 'application/json',
+    sseDurationSeconds: isEventStreamContentType(contentType) ? normalizeSseDurationSeconds(sseDurationSeconds) : 0,
     isWebSocket: isWebSocket || false
   });
   
@@ -326,6 +396,9 @@ app.put('/api/endpoints/:id', async (req, res) => {
   endpoint.statusCode = req.body.statusCode ?? endpoint.statusCode;
   endpoint.contentType = req.body.contentType ?? endpoint.contentType;
   endpoint.isWebSocket = req.body.isWebSocket ?? endpoint.isWebSocket;
+  endpoint.sseDurationSeconds = isEventStreamContentType(endpoint.contentType)
+    ? normalizeSseDurationSeconds(req.body.sseDurationSeconds ?? endpoint.sseDurationSeconds)
+    : 0;
   await endpoint.save();
 
   res.json(endpoint);
@@ -467,6 +540,19 @@ app.use('/test/*', async (req, res) => {
   // 返回自定义响应
   res.status(matchedEndpoint.statusCode);
   res.set('Content-Type', matchedEndpoint.contentType);
+
+  if (isEventStreamContentType(matchedEndpoint.contentType)) {
+    res.set({
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.flushHeaders?.();
+
+    const events = buildSseEventsFromResponse(matchedEndpoint.response);
+    streamSseEvents(req, res, events, matchedEndpoint.sseDurationSeconds);
+    return;
+  }
   
   try {
     if (matchedEndpoint.contentType === 'application/json') {
@@ -492,5 +578,3 @@ server.listen(PORT, () => {
   console.log(`🚀 Test Server 运行在 http://localhost:${PORT}`);
   console.log(`📡 WebSocket 服务运行在 ws://localhost:${PORT}/ws`);
 });
-
-

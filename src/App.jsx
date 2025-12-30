@@ -48,6 +48,7 @@ function App() {
     response: '{"message": "Hello World", "success": true}',
     statusCode: 200,
     contentType: 'application/json',
+    sseDurationSeconds: 0,
     isWebSocket: false
   });
   
@@ -145,6 +146,7 @@ function App() {
       response: '{"message": "Hello World", "success": true}',
       statusCode: 200,
       contentType: 'application/json',
+      sseDurationSeconds: 0,
       isWebSocket: false
     });
     setEditingId(null);
@@ -157,6 +159,7 @@ function App() {
       response: endpoint.response,
       statusCode: endpoint.statusCode,
       contentType: endpoint.contentType,
+      sseDurationSeconds: endpoint.sseDurationSeconds ?? 0,
       isWebSocket: endpoint.isWebSocket
     });
     setEditingId(endpoint._id || endpoint.id);
@@ -387,8 +390,29 @@ function App() {
                   <option value="text/plain">text/plain</option>
                   <option value="text/html">text/html</option>
                   <option value="application/xml">application/xml</option>
+                  <option value="text/event-stream">text/event-stream</option>
                 </select>
               </div>
+
+              {!formData.isWebSocket && formData.contentType === 'text/event-stream' && (
+                <div className="form-group">
+                  <label className="form-label">SSE 完全返回耗时（秒）</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={formData.sseDurationSeconds}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        sseDurationSeconds: e.target.value === '' ? 0 : parseFloat(e.target.value)
+                      })
+                    }
+                    min="0"
+                    step="0.1"
+                    placeholder="例如 5"
+                  />
+                </div>
+              )}
               
               <div className="form-group">
                 <label className="form-label">响应内容</label>
@@ -541,6 +565,9 @@ function App() {
                         <div className="endpoint-meta">
                           <span>状态码: {endpoint.statusCode}</span>
                           <span>{endpoint.contentType}</span>
+                          {endpoint.contentType?.startsWith('text/event-stream') && (
+                            <span>SSE: {endpoint.sseDurationSeconds || 0}s</span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -638,5 +665,3 @@ function App() {
 }
 
 export default App;
-
-
