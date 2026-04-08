@@ -798,38 +798,53 @@ function App() {
                     </div>
                     
                     {expandedLogs.has(index) && (
-                      <div className="log-details">
+                      <div className="log-details" onClick={e => e.stopPropagation()}>
                         {log.headers && (
                           <div className="log-section">
-                            <div className="log-section-title">请求头 Headers</div>
+                            <div className="log-section-header">
+                              <div className="log-section-title">请求头 Headers</div>
+                              <button className="btn-copy" onClick={() => copyToClipboard(JSON.stringify(log.headers, null, 2))}>📋 复制</button>
+                            </div>
                             <pre className="log-code">{JSON.stringify(log.headers, null, 2)}</pre>
                           </div>
                         )}
-                        
+
                         {log.query && Object.keys(log.query).length > 0 && (
                           <div className="log-section">
-                            <div className="log-section-title">查询参数 Query</div>
+                            <div className="log-section-header">
+                              <div className="log-section-title">查询参数 Query</div>
+                              <button className="btn-copy" onClick={() => copyToClipboard(JSON.stringify(log.query, null, 2))}>📋 复制</button>
+                            </div>
                             <pre className="log-code">{JSON.stringify(log.query, null, 2)}</pre>
                           </div>
                         )}
-                        
+
                         {log.body && Object.keys(log.body).length > 0 && (
                           <div className="log-section">
-                            <div className="log-section-title">请求体 Body</div>
+                            <div className="log-section-header">
+                              <div className="log-section-title">请求体 Body</div>
+                              <button className="btn-copy" onClick={() => copyToClipboard(typeof log.body === 'string' ? log.body : JSON.stringify(log.body, null, 2))}>📋 复制</button>
+                            </div>
                             <pre className="log-code">{typeof log.body === 'string' ? log.body : JSON.stringify(log.body, null, 2)}</pre>
                           </div>
                         )}
-                        
+
                         {log.message && log.type === 'websocket' && (
                           <div className="log-section">
-                            <div className="log-section-title">WebSocket 消息</div>
+                            <div className="log-section-header">
+                              <div className="log-section-title">WebSocket 消息</div>
+                              <button className="btn-copy" onClick={() => copyToClipboard(log.message)}>📋 复制</button>
+                            </div>
                             <pre className="log-code">{log.message}</pre>
                           </div>
                         )}
-                        
+
                         {log.connectionId && (
                           <div className="log-section">
-                            <div className="log-section-title">连接 ID</div>
+                            <div className="log-section-header">
+                              <div className="log-section-title">连接 ID</div>
+                              <button className="btn-copy" onClick={() => copyToClipboard(log.connectionId)}>📋 复制</button>
+                            </div>
                             <pre className="log-code">{log.connectionId}</pre>
                           </div>
                         )}
